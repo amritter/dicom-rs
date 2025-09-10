@@ -13,7 +13,7 @@ use dicom_encoding::text::{self, TextCodec};
 use dicom_encoding::TransferSyntax;
 use dicom_parser::dataset::{DataSetWriter, IntoTokens};
 use snafu::{ensure, Backtrace, OptionExt, ResultExt, Snafu};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::ops::{
     ApplyError, ApplyResult, IllegalExtendSnafu, IncompatibleTypesSnafu, MandatorySnafu,
@@ -183,10 +183,10 @@ where
 impl FileMetaTable {
     /// Construct a file meta group table
     /// by parsing a DICOM data set from a reader.
-    /// 
+    ///
     /// This method fails if the first four bytes
     /// are not the DICOM magic code `DICM`.
-    pub fn from_reader<R: Read>(file: R) -> Result<Self> {
+    pub fn from_reader<R: Read + Seek>(file: R) -> Result<Self> {
         FileMetaTable::read_from(file)
     }
 
@@ -481,7 +481,7 @@ impl FileMetaTable {
 
     /// Read the DICOM magic code (`b"DICM"`)
     /// and the whole file meta group from the given reader.
-    fn read_from<S: Read>(mut file: S) -> Result<Self> {
+    fn read_from<S: Read + Seek>(mut file: S) -> Result<Self> {
         let mut buff: [u8; 4] = [0; 4];
         {
             // check magic code
@@ -517,8 +517,14 @@ impl FileMetaTable {
         let mut total_bytes_read = 0;
         let mut builder = builder.group_length(group_length);
 
+        
+
         // Fetch optional data elements
-        while total_bytes_read < group_length {
+        while if group_length > 0 {
+            total_bytes_read < group_length
+        } else {
+            true
+        } {
             let (elem, header_bytes_read) = decoder
                 .decode_header(&mut file)
                 .context(DecodeElementSnafu)?;
@@ -655,6 +661,13 @@ impl FileMetaTable {
                     // unexpected tag from another group! do nothing for now,
                     // but this could pose an issue up ahead (see #50)
                     tracing::warn!("Unexpected off-group tag {}", tag);
+                    if group_length == 0 {
+                        // if group_length is 0 try to read meta tags until first non meta tag and break but reset buffer read position
+                        file.seek(SeekFrom::Current(-(header_bytes_read as i64)))
+                        .unwrap();
+                        break;
+                    }
+                    
                     // consume value without saving it
                     let bytes_read =
                         std::io::copy(&mut (&mut file).take(elem_len as u64), &mut std::io::sink())
@@ -1026,6 +1039,8 @@ fn dicom_len<T: AsRef<str>>(x: T) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use crate::{IMPLEMENTATION_CLASS_UID, IMPLEMENTATION_VERSION_NAME};
 
     use super::{dicom_len, FileMetaTable, FileMetaTableBuilder};
@@ -1068,7 +1083,7 @@ mod tests {
 
     #[test]
     fn read_meta_table_from_reader() {
-        let mut source = TEST_META_1;
+        let mut source = Cursor::new(TEST_META_1);
 
         let table = FileMetaTable::from_reader(&mut source).unwrap();
 
@@ -1397,7 +1412,8 @@ mod tests {
             information_group_length: 0,
             information_version: [0u8, 1u8],
             media_storage_sop_class_uid: "1.2.840.10008.5.1.4.1.1.7".to_owned(),
-            media_storage_sop_instance_uid: "2.25.137731752600317795446120660167595746868".to_owned(),
+            media_storage_sop_instance_uid: "2.25.137731752600317795446120660167595746868"
+                .to_owned(),
             transfer_syntax: "1.2.840.10008.1.2.4.91".to_owned(),
             implementation_class_uid: "2.25.305828488182831875890203105390285383139".to_owned(),
             implementation_version_name: Some("MYTOOL100".to_owned()),
@@ -1413,9 +1429,12 @@ mod tests {
         let mut buf = vec![b'D', b'I', b'C', b'M'];
         table.write(&mut buf).unwrap();
 
-        let table2 = FileMetaTable::from_reader(&mut buf.as_slice())
+        let table2 = FileMetaTable::from_reader(Cursor::new(&mut buf.as_slice()))
             .expect("Should not fail to read the table from the written data");
 
-        assert_eq!(table.information_group_length, table2.information_group_length);
+        assert_eq!(
+            table.information_group_length,
+            table2.information_group_length
+        );
     }
 }

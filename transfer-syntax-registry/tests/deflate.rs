@@ -1,7 +1,7 @@
 //! Test suite for deflated data set reading and writing
 #![cfg(feature = "deflate")]
 
-use std::{fs::File, io::BufReader};
+use std::{fs::File, io::{BufReader, Cursor}};
 
 use dicom_core::Tag;
 use dicom_object::OpenFileOptions;
@@ -75,7 +75,7 @@ fn write_deflated() {
 
     // now read the deflated data back
     let object2 = OpenFileOptions::new()
-        .from_reader(buf.as_slice())
+        .from_reader(Cursor::new(buf.as_slice()))
         .expect("Should read deflated data back successfully");
     // check that the objects are mostly equal
 

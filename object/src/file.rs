@@ -7,7 +7,7 @@ use dicom_transfer_syntax_registry::TransferSyntaxRegistry;
 pub use dicom_parser::dataset::read::OddLengthStrategy;
 
 use crate::{DefaultDicomObject, ReadError};
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 pub type Result<T, E = ReadError> = std::result::Result<T, E>;
@@ -18,7 +18,7 @@ pub type Result<T, E = ReadError> = std::result::Result<T, E>;
 /// preamble: file meta group, followed by the rest of the data set.
 pub fn from_reader<F>(file: F) -> Result<DefaultDicomObject>
 where
-    F: Read,
+    F: Read+Seek,
 {
     OpenFileOptions::new().from_reader(file)
 }
@@ -117,7 +117,7 @@ impl<D, T> OpenFileOptions<D, T> {
     }
 
     /// Set the transfer syntax index to use when reading the file.
-    #[deprecated(since="0.8.1", note="please use `transfer_syntax_index` instead")]
+    #[deprecated(since = "0.8.1", note = "please use `transfer_syntax_index` instead")]
     pub fn tranfer_syntax_index<Tr>(self, ts_index: Tr) -> OpenFileOptions<D, Tr>
     where
         Tr: TransferSyntaxIndex,
@@ -165,7 +165,7 @@ impl<D, T> OpenFileOptions<D, T> {
     /// file meta group, followed by the rest of the data set.
     pub fn from_reader<R>(self, from: R) -> Result<DefaultDicomObject<D>>
     where
-        R: Read,
+        R: Read + Seek,
         D: DataDictionary,
         D: Clone,
         T: TransferSyntaxIndex,

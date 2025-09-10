@@ -46,7 +46,7 @@ use smallvec::SmallVec;
 use snafu::{ensure, OptionExt, ResultExt};
 use std::borrow::Cow;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek};
 use std::path::Path;
 use std::{collections::BTreeMap, io::Write};
 
@@ -163,7 +163,7 @@ impl FileDicomObject<InMemDicomObject<StandardDataDictionary>> {
     /// followed by the rest of the data set.
     pub fn from_reader<S>(src: S) -> Result<Self, ReadError>
     where
-        S: Read,
+        S: Read + Seek,
     {
         Self::from_reader_with_dict(src, StandardDataDictionary)
     }
@@ -362,7 +362,7 @@ where
     /// followed by the rest of the data set.
     pub fn from_reader_with_dict<S>(src: S, dict: D) -> Result<Self, ReadError>
     where
-        S: Read,
+        S: Read + Seek,
     {
         Self::from_reader_with(src, dict, TransferSyntaxRegistry)
     }
@@ -382,7 +382,7 @@ where
     /// [`from_reader_with_dict`]: #method.from_reader_with_dict
     pub fn from_reader_with<S, R>(src: S, dict: D, ts_index: R) -> Result<Self, ReadError>
     where
-        S: Read,
+        S: Read + Seek,
         R: TransferSyntaxIndex,
     {
         Self::from_reader_with_all_options(
@@ -404,7 +404,7 @@ where
         odd_length: OddLengthStrategy,
     ) -> Result<Self, ReadError>
     where
-        S: Read,
+        S: Read + Seek,
         R: TransferSyntaxIndex,
     {
         let mut file = BufReader::new(src);
@@ -427,7 +427,7 @@ where
     // and provide a better `ReadPreamble` option accordingly
     fn detect_preamble<S>(reader: &mut BufReader<S>) -> std::io::Result<ReadPreamble>
     where
-        S: Read,
+        S: Read + Seek,
     {
         let buf = reader.fill_buf()?;
         let buflen = buf.len();
@@ -463,7 +463,7 @@ where
         odd_length: OddLengthStrategy,
     ) -> Result<Self, ReadError>
     where
-        S: Read,
+        S: Read + Seek,
         R: TransferSyntaxIndex,
     {
         // read metadata header
@@ -710,16 +710,19 @@ where
                         uid,
                         name: ts.name(),
                         feature_name: "dicom-transfer-syntax-registry/deflate",
-                    }.fail();
+                    }
+                    .fail();
                 }
 
                 ReadUnsupportedTransferSyntaxSnafu {
                     uid,
                     name: ts.name(),
-                }.fail()
+                }
+                .fail()
             }
             Codec::None | Codec::EncapsulatedPixelData(..) => {
-                let mut dataset = DataSetReader::new_with_ts_cs(from, ts, cs).context(CreateParserSnafu)?;
+                let mut dataset =
+                    DataSetReader::new_with_ts_cs(from, ts, cs).context(CreateParserSnafu)?;
                 InMemDicomObject::build_object(&mut dataset, dict, false, Length::UNDEFINED, None)
             }
         }
@@ -1844,7 +1847,8 @@ where
         if let Codec::Dataset(Some(adapter)) = ts.codec() {
             let adapter = adapter.adapt_writer(Box::new(to));
             // prepare data set writer
-            let mut dset_writer = DataSetWriter::with_ts(adapter, ts).context(CreatePrinterSnafu)?;
+            let mut dset_writer =
+                DataSetWriter::with_ts(adapter, ts).context(CreatePrinterSnafu)?;
 
             // write object
             dset_writer
@@ -1854,7 +1858,8 @@ where
             Ok(())
         } else {
             // prepare data set writer
-            let mut dset_writer = DataSetWriter::with_ts_cs(to, ts, cs).context(CreatePrinterSnafu)?;
+            let mut dset_writer =
+                DataSetWriter::with_ts_cs(to, ts, cs).context(CreatePrinterSnafu)?;
 
             // write object
             dset_writer
@@ -2524,8 +2529,7 @@ mod tests {
         let meta = file_object.meta();
 
         assert_eq!(
-            meta.media_storage_sop_instance_uid
-                .trim_end_matches('\0'),
+            meta.media_storage_sop_instance_uid.trim_end_matches('\0'),
             sop_uid.trim_end_matches('\0'),
         );
     }
@@ -3838,11 +3842,9 @@ mod tests {
             Some(Length(0)),
         );
 
-        assert!(
-            !obj.update_value(tags::BURNED_IN_ANNOTATION, |_value| {
-                panic!("should not be called")
-            }),
-        );
+        assert!(!obj.update_value(tags::BURNED_IN_ANNOTATION, |_value| {
+            panic!("should not be called")
+        }),);
 
         let o = obj.update_value(tags::ANATOMIC_REGION_SEQUENCE, |value| {
             // add an item
